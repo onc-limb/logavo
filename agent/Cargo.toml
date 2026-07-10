@@ -1,0 +1,11 @@
+# ASSUMPTION: docs/spec.md Phase 0 only requires `cargo new agent` scaffolding;
+# runtime dependencies (tokio, axum, serde, regex) belong to Phase 1+, and the
+# issue's acceptance criteria state "no new deps", so none are declared here.
+# ASSUMPTION: spec pins no Rust edition; edition 2021 is used for broad
+# toolchain compatibility.
+[package]
+name = "agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
