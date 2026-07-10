@@ -80,9 +80,6 @@ defmodule LogavoWeb do
 
   defp html_helpers do
     quote do
-      # Translation
-      use Gettext, backend: LogavoWeb.Gettext
-
       # HTML escaping functionality
       import Phoenix.HTML
       # Core UI components
