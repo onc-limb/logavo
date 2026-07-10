@@ -16,7 +16,7 @@ jobs:
       server: ${{ steps.filter.outputs.server }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Filter changed paths
         id: filter
@@ -38,7 +38,7 @@ jobs:
         working-directory: agent
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -63,7 +63,7 @@ jobs:
       MIX_ENV: test
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Erlang/Elixir
         uses: erlef/setup-beam@v1
@@ -72,7 +72,7 @@ jobs:
           elixir-version: '1.18'
 
       - name: Cache mix dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             server/deps
