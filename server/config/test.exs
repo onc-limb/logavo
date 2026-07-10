@@ -17,12 +17,6 @@ config :logavo, LogavoWeb.Endpoint,
   secret_key_base: "logavo-test-secret-key-base-0123456789abcdefghijklmnopqrstuvwxyz-0123456789ABCDEF",
   server: false
 
-# In test we don't send emails
-config :logavo, Logavo.Mailer, adapter: Swoosh.Adapters.Test
-
-# Disable swoosh api client as it is only required for production adapters
-config :swoosh, :api_client, false
-
 # Print only warnings and errors during test
 config :logger, level: :warning
 
