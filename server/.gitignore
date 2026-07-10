@@ -7,7 +7,7 @@
 # The directory Mix downloads your dependencies sources to.
 /deps/
 
-# Where 3rd-party dependencies like ExDoc output generated docs.
+# Where third-party dependencies like ExDoc output generated docs.
 /doc/
 
 # Ignore .fetch files in case you like to edit your project deps locally.
@@ -25,9 +25,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 logavo-*.tar
 
-# Ignore assets that are produced by build tools.
-/priv/static/assets/
-
 # Ignore digested assets cache.
 /priv/static/cache_manifest.json
 
@@ -35,7 +32,6 @@ logavo-*.tar
 npm-debug.log
 /assets/node_modules/
 
-# SQLite database files.
+# Ignore the default SQLite databases (dev/test) and their WAL/SHM files.
 *.db
-*.db-shm
-*.db-wal
+*.db-*
