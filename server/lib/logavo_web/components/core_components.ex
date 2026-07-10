@@ -7,7 +7,6 @@ defmodule LogavoWeb.CoreComponents do
   customize them or feel free to swap in another framework altogether.
   """
   use Phoenix.Component
-  use Gettext, backend: LogavoWeb.Gettext
 
   alias Phoenix.LiveView.JS
 
@@ -44,13 +43,13 @@ defmodule LogavoWeb.CoreComponents do
       {@rest}
     >
       <p :if={@title} class="flex items-center gap-1.5 text-sm font-semibold leading-6">
-        <.icon :if={@kind == :info} name="hero-information-circle-mini" class="h-4 w-4" />
-        <.icon :if={@kind == :error} name="hero-exclamation-circle-mini" class="h-4 w-4" />
+        <.icon :if={@kind == :info} name="information-circle" class="h-4 w-4" />
+        <.icon :if={@kind == :error} name="exclamation-circle" class="h-4 w-4" />
         <%= @title %>
       </p>
       <p class="mt-2 text-sm leading-5"><%= msg %></p>
       <button type="button" class="group absolute top-1 right-1 p-2" aria-label="close">
-        <.icon name="hero-x-mark-solid" class="h-5 w-5 opacity-40 group-hover:opacity-70" />
+        <.icon name="x-mark" class="h-5 w-5 opacity-40 group-hover:opacity-70" />
       </button>
     </div>
     """
@@ -79,7 +78,7 @@ defmodule LogavoWeb.CoreComponents do
         phx-connected={hide("#client-error")}
         hidden
       >
-        Attempting to reconnect <.icon name="hero-arrow-path" class="ml-1 h-3 w-3 animate-spin" />
+        Attempting to reconnect <.icon name="arrow-path" class="ml-1 h-3 w-3 animate-spin" />
       </.flash>
 
       <.flash
@@ -91,36 +90,75 @@ defmodule LogavoWeb.CoreComponents do
         hidden
       >
         Hang in there while we get back on track
-        <.icon name="hero-arrow-path" class="ml-1 h-3 w-3 animate-spin" />
+        <.icon name="arrow-path" class="ml-1 h-3 w-3 animate-spin" />
       </.flash>
     </div>
     """
   end
 
   @doc """
-  Renders a [Heroicon](https://heroicons.com).
+  Renders a minimal inline SVG icon.
 
-  Heroicons come in three styles – outline, solid, and mini.
-  By default, the outline style is used, but solid and mini may
-  be applied by using the `-solid` and `-mini` suffix.
-
-  You can customize the size and colors of the icons by setting
-  width, height, and background color classes.
-
-  Icons are extracted from the `deps/heroicons` directory and bundled within
-  your compiled app.css by the plugin in your `assets/tailwind.config.js`.
+  A small hand-written set of icons is bundled directly in this module, so no
+  external icon library is required. Size and color are controlled with utility
+  classes passed via `class` (icons use `currentColor`).
 
   ## Examples
 
-      <.icon name="hero-x-mark-solid" />
-      <.icon name="hero-arrow-path" class="ml-1 w-3 h-3 animate-spin" />
+      <.icon name="x-mark" />
+      <.icon name="arrow-path" class="ml-1 h-3 w-3 animate-spin" />
   """
-  attr :name, :string, required: true
+  attr :name, :string, required: true, values: ~w(information-circle exclamation-circle x-mark arrow-path)
   attr :class, :string, default: nil
 
-  def icon(%{name: "hero-" <> _} = assigns) do
+  def icon(%{name: "information-circle"} = assigns) do
     ~H"""
-    <span class={[@name, @class]} />
+    <svg class={@class} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path
+        fill-rule="evenodd"
+        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0011.747 15H12a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
+        clip-rule="evenodd"
+      />
+    </svg>
+    """
+  end
+
+  def icon(%{name: "exclamation-circle"} = assigns) do
+    ~H"""
+    <svg class={@class} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path
+        fill-rule="evenodd"
+        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z"
+        clip-rule="evenodd"
+      />
+    </svg>
+    """
+  end
+
+  def icon(%{name: "x-mark"} = assigns) do
+    ~H"""
+    <svg class={@class} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+    </svg>
+    """
+  end
+
+  def icon(%{name: "arrow-path"} = assigns) do
+    ~H"""
+    <svg
+      class={@class}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      aria-hidden="true"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+      />
+    </svg>
     """
   end
 
@@ -149,24 +187,27 @@ defmodule LogavoWeb.CoreComponents do
   end
 
   @doc """
-  Translates an error message using gettext.
+  Translates an error message.
+
+  Interpolates the `%{key}` placeholders in the message with the values from
+  `opts`. Internationalization has been intentionally removed, so messages are
+  returned as plain English strings.
+
+  Only options whose placeholder actually appears in the message are
+  interpolated. This keeps unused, non-`String.Chars` metadata (such as the
+  `enum: [...]` list Ecto passes for inclusion validations) from being
+  stringified, which would otherwise raise.
   """
   def translate_error({msg, opts}) do
-    # When using gettext, we typically pass the strings we want
-    # to translate as a static argument:
-    #
-    #     # Translate the number of files with plural rules
-    #     dngettext("errors", "1 file", "%{count} files", count)
-    #
-    # However the error messages in our forms and APIs are generated
-    # dynamically, so we need to translate them by calling Gettext
-    # with our gettext backend as first argument. Translations are
-    # available in the errors.po file (as we use the "errors" domain).
-    if count = opts[:count] do
-      Gettext.dngettext(LogavoWeb.Gettext, "errors", msg, msg, count, opts)
-    else
-      Gettext.dgettext(LogavoWeb.Gettext, "errors", msg, opts)
-    end
+    Enum.reduce(opts, msg, fn {key, value}, acc ->
+      placeholder = "%{#{key}}"
+
+      if String.contains?(acc, placeholder) do
+        String.replace(acc, placeholder, to_string(value))
+      else
+        acc
+      end
+    end)
   end
 
   @doc """
