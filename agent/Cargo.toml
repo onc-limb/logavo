@@ -1,8 +1,16 @@
-# ASSUMPTION: This subtask's acceptance criteria state "no new deps", and
-# `cargo check` runs without network access, so no crates are added — not even
-# serde/toml. The Phase 1 TOML config loader is implemented with std only
-# (see src/config.rs). Core deps (tokio/axum/serde/regex) are introduced in
-# later subtasks (agent-tail/parse/ship/proxy) where they are actually needed.
+# Phase 1 agent crate.
+#
+# ASSUMPTION: The TOML config loader (agent-config subtask) is implemented with
+# std only (see src/config.rs); that subtask needed no crates and its acceptance
+# criteria stated "no new deps".
+#
+# agent-tail (追記行の非同期 tail) uses tokio. tokio は docs/spec.md 5.1 と親 epic
+# が明示的に中核依存 (tokio/axum/serde/regex) として追加を許可・推奨しており、
+# 依存最小主義の対象は中核依存“以外”である。spec の中核要件『tokio でファイルの
+# 追記行を非同期に検知する』を満たすため、std::thread ベースの擬似 tail から
+# tokio 非同期ランタイムへ置き換えた (see src/tail.rs)。有効化する feature は
+# 非同期 tail・並行 tail・正常停止に必要な最小限に絞る。
+#
 # ASSUMPTION: spec pins no Rust edition; edition 2021 is used for broad
 # toolchain compatibility.
 [package]
@@ -11,3 +19,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync", "signal"] }
