@@ -11,6 +11,13 @@
 # tokio 非同期ランタイムへ置き換えた (see src/tail.rs)。有効化する feature は
 # 非同期 tail・並行 tail・正常停止に必要な最小限に絞る。
 #
+# agent-ship (バッチ送信・バッファ再送) は正規化済みログを最大100件 or 1秒で
+# バッチ化し server の POST /api/ingest へ送る (see src/ship.rs)。送信先は
+# docs/spec.md 5. のとおり localhost のみのため、HTTP クライアントは reqwest 等を
+# 新規依存として足さず、tokio の TcpStream 上に HTTP/1.1 POST を自作した
+# (依存最小主義: 学習題材/攻撃面・更新負担の抑制)。これに伴い tokio へ "net"
+# feature のみ追加 (新規 crate ではなく既存中核依存の feature 追加)。
+#
 # ASSUMPTION: spec pins no Rust edition; edition 2021 is used for broad
 # toolchain compatibility.
 [package]
@@ -19,4 +26,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync", "signal", "net"] }
