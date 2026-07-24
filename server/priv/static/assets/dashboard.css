@@ -1,0 +1,77 @@
+/* logavo dashboard — 素の CSS を priv/static/ から静的配信する。
+   アセットパイプライン（tailwind/esbuild 等）は再導入しない（spec 5.1）。
+   対象は localhost のみ。 */
+
+.dashboard {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 1rem;
+  color: #111827;
+}
+
+.dashboard-title {
+  font-size: 1.25rem;
+  margin: 0 0 1rem;
+}
+
+.dashboard-empty {
+  color: #6b7280;
+}
+
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 13rem 9rem 4.5rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.2rem 0.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-timestamp {
+  color: #6b7280;
+}
+
+.log-source {
+  color: #374151;
+  font-weight: 600;
+}
+
+.log-level-badge {
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 0.8em;
+}
+
+.log-message {
+  color: #111827;
+}
+
+/* レベル別の色分け（spec 2.1 の enum に対応）。行全体に log-level-<level> が付く。 */
+.log-level-debug {
+  color: #6b7280;
+}
+
+.log-level-info {
+  color: #1d4ed8;
+}
+
+.log-level-warn {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.log-level-error {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.log-level-unknown {
+  color: #6b7280;
+}
