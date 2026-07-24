@@ -18,6 +18,8 @@ defmodule LogavoWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    # リアルタイムログダッシュボード（spec Phase 2, localhost 前提）。
+    live "/dashboard", DashboardLive, :index
   end
 
   # 取り込みAPI（localhost 前提のため認証なし, spec 3.1 / 5）。
