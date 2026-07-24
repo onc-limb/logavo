@@ -2,16 +2,19 @@
 //
 // 引数で渡された TOML 設定ファイル (省略時は ./logavo.toml) を読み込み、
 // 内容の要約を表示したうえで、各 source のファイルを tokio で並行に非同期 tail し、
-// 検知した追記行を表示する。設定の欠落・構文エラー時は非ゼロ終了する。
+// 検知した追記行を spec 2.1 の共通 JSON に正規化して表示する。
+// 設定の欠落・構文エラー時は非ゼロ終了する。
 // Ctrl-C を受けると全 tail タスクへ停止を通知し、join してから終了する。
-// parse / ship / proxy は後続サブタスクで追加する。
+// ship / proxy は後続サブタスクで追加する。
 //
 // ASSUMPTION: 設定パスの既定値は spec の例に合わせ ./logavo.toml とする。
 
 mod config;
+mod parse;
 mod tail;
 
 use std::process;
+use std::time::SystemTime;
 
 use config::Config;
 
@@ -44,8 +47,8 @@ async fn main() {
         return;
     }
 
-    // agent-tail: 各 source を tokio で並行に非同期 tail する。parse / ship は後続
-    // サブタスクで追加するため、ここでは検知した追記行を標準出力へ表示するにとどめる。
+    // agent-tail: 各 source を tokio で並行に非同期 tail する。ship は後続サブタスクで
+    // 追加するため、ここでは検知した追記行を正規化した JSON を標準出力へ表示するにとどめる。
     let (tailer, mut rx) = tail::spawn(&cfg.sources);
     println!(
         "tailing {} source(s); append to a file or press Ctrl-C to stop",
@@ -59,13 +62,16 @@ async fn main() {
             maybe_line = rx.recv() => {
                 match maybe_line {
                     Some(line) => {
-                        println!(
-                            "[{}] {}:{} {}",
-                            line.source,
-                            line.path.display(),
-                            line.line_no,
-                            line.raw
+                        // agent-parse: 1行を spec 2.1 の共通 JSON へ正規化する。
+                        // timestamp がパース不能な場合は受信時刻を採用する。
+                        let entry = parse::normalize(
+                            &line.source,
+                            &line.raw,
+                            &line.path.display().to_string(),
+                            line.line_no as u64,
+                            SystemTime::now(),
                         );
+                        println!("{}", entry.to_json());
                     }
                     // すべての tail タスクが終了しチャネルが閉じた。
                     None => break,
