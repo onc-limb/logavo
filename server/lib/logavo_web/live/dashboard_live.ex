@@ -1,6 +1,7 @@
 defmodule LogavoWeb.DashboardLive do
   @moduledoc """
-  リアルタイムログダッシュボード（spec Phase 2）＋フィルタ検索 UI（spec Phase 3）。
+  リアルタイムログダッシュボード（spec Phase 2）＋フィルタ検索 UI（spec Phase 3）
+  ＋プロキシリクエスト可視化（spec Phase 4）。
 
   マウント時に `Logavo.PubSub` を購読し、`POST /api/ingest` の保存後に
   ブロードキャストされる新着ログをリロードなしで表示する。レベル別に
@@ -12,6 +13,13 @@ defmodule LogavoWeb.DashboardLive do
   リアルタイム表示の既存挙動はそのまま保たれる。サーバ横断の検索は
   `GET /api/logs`（`LogavoWeb.LogsController`）が担う。
 
+  Phase 4 として `proxy_requests` テーブル（server-schema）を用いた 2 つのビューを
+  追加する: 『遅い順（latency_ms 降順）』と『ステータス別集計』。データはマウント
+  時と、プロキシ計測ログのブロードキャスト受信時、および明示的な再読み込み
+  （`refresh_proxy`）で `Logavo.Logs` から読み直す。集計・並び替えは可能な限り
+  server-schema のクエリ（全件対象）に委ね、直近ウィンドウのメモリ内計算に
+  依存しない。
+
   依存最小主義（spec 5.1）に従い、アセットパイプラインは使わず素の CSS を
   `priv/static/assets/` から静的配信する。対象は localhost のみ。
   """
@@ -20,16 +28,21 @@ defmodule LogavoWeb.DashboardLive do
   # server-ingest（保存後に `Logavo.Logs` 経由でブロードキャストする）が発行する
   # トピック。ダッシュボードはこの単一トピックだけを購読し、server-ingest 側の
   # 発行トピックと 1 対 1 で対応させる（推測で複数トピックを購読して取りこぼしを
-  # 隠す、という設計は採らない）。この契約は接続済み LiveView テストで
-  # subscribe → broadcast → 再描画の実経路として検証する。
+  # 隠す、という設計は採らない）。プロキシ計測ログ（`POST /api/proxy` 保存後の
+  # ブロードキャスト）も同じ contract に載せ、受信側は内容（`latency_ms` の有無）で
+  # ログ一覧とプロキシビューへ振り分ける（`route_entries` 参照）。この契約は
+  # 接続済み LiveView テストで subscribe → broadcast → 再描画の実経路として検証する。
   #
-  # ASSUMPTION: server-ingest と同一トピック名であることが本ダッシュボードの
-  # リアルタイム表示の前提。トピックを変更する場合は server-ingest の
+  # ASSUMPTION: server-ingest / プロキシ保存と同一トピック名であることが本
+  # ダッシュボードのリアルタイム表示の前提。トピックを変更する場合は server 側の
   # ブロードキャストと dashboard_live_test.exs の @topic も併せて更新すること。
   @topic "logs"
 
   # 表示件数の上限。ローカル開発用途なので DOM を軽く保つ。
   @max_rows 200
+
+  # 『遅い順』に表示するプロキシリクエストの上限。
+  @slow_limit 50
 
   @impl true
   def mount(_params, _session, socket) do
@@ -43,6 +56,7 @@ defmodule LogavoWeb.DashboardLive do
       |> assign(:filters, default_filters())
       |> assign(:logs, initial_logs(@max_rows))
       |> assign_visible()
+      |> load_proxy()
 
     {:ok, socket}
   end
@@ -50,15 +64,19 @@ defmodule LogavoWeb.DashboardLive do
   @impl true
   def render(assigns) do
     # Phase 2 のダッシュボードテストは max_rows / logs だけを持つソケットを直接
-    # 組み立てて render を呼ぶ（mount を経由しない）。Phase 3 で filters / visible を
-    # 追加したことでこの既存テスト経路が壊れないよう、未設定なら既定へフォールバック
-    # する。実運用では mount が両者を設定済みのため assign_new はスキップされる。
+    # 組み立てて render を呼ぶ（mount を経由しない）。Phase 3/4 で filters / visible /
+    # proxy_* を追加したことでこの既存テスト経路が壊れないよう、未設定なら既定へ
+    # フォールバックする。実運用では mount が全て設定済みのため assign_new は
+    # スキップされる。
     assigns = assign_new(assigns, :filters, fn -> default_filters() end)
 
     assigns =
       assign_new(assigns, :visible, fn ->
         visible_logs(assigns.logs, assigns.filters)
       end)
+
+    assigns = assign_new(assigns, :proxy_slow, fn -> [] end)
+    assigns = assign_new(assigns, :proxy_status, fn -> [] end)
 
     ~H"""
     <div id="dashboard" class="dashboard">
@@ -119,11 +137,79 @@ defmodule LogavoWeb.DashboardLive do
           <span class="log-message"><%= log.message %></span>
         </li>
       </ul>
+
+      <%!-- プロキシリクエストビュー（spec Phase 4）。proxy_requests テーブルを
+            もとに『ステータス別集計』と『遅い順（latency_ms 降順）』を表示する。 --%>
+      <section id="proxy-views" class="proxy-views">
+        <div class="proxy-header">
+          <h2 class="proxy-title">プロキシリクエスト</h2>
+          <button type="button" phx-click="refresh_proxy" class="proxy-refresh">再読み込み</button>
+        </div>
+
+        <div class="proxy-status">
+          <h3 class="proxy-subtitle">ステータス別集計</h3>
+          <p :if={@proxy_status == []} id="proxy-status-empty" class="proxy-empty">
+            プロキシ経由のリクエストはまだありません。
+          </p>
+          <table :if={@proxy_status != []} id="proxy-status-table" class="proxy-status-table">
+            <thead>
+              <tr><th>status</th><th>count</th></tr>
+            </thead>
+            <tbody>
+              <tr
+                :for={{status, count} <- @proxy_status}
+                id={"proxy-status-#{status}"}
+                class={"proxy-status-row proxy-status-#{status_class(status)}"}
+                data-status={status}
+              >
+                <td class="proxy-status-code"><%= status %></td>
+                <td class="proxy-status-count"><%= count %></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="proxy-slow">
+          <h3 class="proxy-subtitle">遅い順（latency_ms）</h3>
+          <p :if={@proxy_slow == []} id="proxy-slow-empty" class="proxy-empty">
+            プロキシ経由のリクエストはまだありません。
+          </p>
+          <table :if={@proxy_slow != []} id="proxy-slow-table" class="proxy-slow-table">
+            <thead>
+              <tr>
+                <th>latency_ms</th>
+                <th>method</th>
+                <th>path</th>
+                <th>status</th>
+                <th>req</th>
+                <th>res</th>
+                <th>time</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                :for={r <- @proxy_slow}
+                id={"proxy-req-#{r.id}"}
+                class={"proxy-row proxy-status-#{status_class(r.status)}"}
+                data-latency={r.latency_ms}
+              >
+                <td class="proxy-latency"><%= r.latency_ms %></td>
+                <td class="proxy-method"><%= r.method %></td>
+                <td class="proxy-path"><%= r.path %></td>
+                <td class="proxy-status-cell"><%= r.status %></td>
+                <td class="proxy-req-size"><%= r.req_size %></td>
+                <td class="proxy-res-size"><%= r.res_size %></td>
+                <td class="proxy-timestamp"><%= r.timestamp %></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
     """
   end
 
-  # --- フィルタイベント --------------------------------------------------
+  # --- フィルタ / プロキシイベント ---------------------------------------
 
   @impl true
   def handle_event("filter", %{"filters" => filters}, socket) do
@@ -136,34 +222,52 @@ defmodule LogavoWeb.DashboardLive do
     {:noreply, socket |> assign(:filters, default_filters()) |> assign_visible()}
   end
 
+  def handle_event("refresh_proxy", _params, socket) do
+    {:noreply, load_proxy(socket)}
+  end
+
   # --- PubSub 受信 -------------------------------------------------------
-  # ASSUMPTION: server-ingest がブロードキャストするメッセージの tag は本タスクの
-  # スコープ内から確定できないため、特定 tag の whitelist ではなく「ログ（map /
-  # struct、またはそのリスト）を載せた任意のメッセージ」を広く受理する。こうする
-  # ことで tag 名が推測と食い違っても（例: `{:log_created, %LogEntry{}}`）新着が
-  # 最後の catch-all で無言破棄されることがない。ログを載せない制御メッセージ
-  # だけが catch-all で無視される。
+  # ASSUMPTION: server-ingest / proxy-ingest がブロードキャストするメッセージの
+  # tag は本タスクのスコープから確定できないため、特定 tag の whitelist ではなく
+  # 「ログ（map / struct、またはそのリスト）を載せた任意のメッセージ」を広く
+  # 受理する。受理したエントリは内容で振り分ける（`latency_ms` を持つものは
+  # プロキシ計測ログとみなしプロキシビューを読み直し、それ以外はログ一覧へ
+  # 先頭追加する）。ログを載せない制御メッセージだけが catch-all で無視される。
 
   @impl true
   def handle_info({_tag, entries}, socket) when is_list(entries) do
-    {:noreply, prepend(socket, entries)}
+    {:noreply, route_entries(socket, entries)}
   end
 
   def handle_info({_tag, %{} = entry}, socket) do
-    {:noreply, prepend(socket, [entry])}
+    {:noreply, route_entries(socket, [entry])}
   end
 
   def handle_info(entries, socket) when is_list(entries) do
-    {:noreply, prepend(socket, entries)}
+    {:noreply, route_entries(socket, entries)}
   end
 
   def handle_info(%_{} = entry, socket) do
-    {:noreply, prepend(socket, [entry])}
+    {:noreply, route_entries(socket, [entry])}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   # --- 内部ヘルパ --------------------------------------------------------
+
+  # 受信エントリを内容で振り分ける。プロキシ計測ログ（`latency_ms` を持つ）が
+  # 含まれればプロキシビューを読み直し、通常ログはログ一覧へ先頭追加する。
+  defp route_entries(socket, entries) do
+    {proxy, logs} = Enum.split_with(entries, &proxy_entry?/1)
+    socket = if logs == [], do: socket, else: prepend(socket, logs)
+    if proxy == [], do: socket, else: load_proxy(socket)
+  end
+
+  defp proxy_entry?(entry) when is_map(entry) do
+    Map.has_key?(entry, :latency_ms) or Map.has_key?(entry, "latency_ms")
+  end
+
+  defp proxy_entry?(_), do: false
 
   defp prepend(socket, entries) do
     incoming = Enum.map(entries, &normalize/1)
@@ -269,6 +373,152 @@ defmodule LogavoWeb.DashboardLive do
       _ -> []
     end
   end
+
+  # --- プロキシ（Phase 4） -----------------------------------------------
+
+  # プロキシビュー（遅い順 / ステータス別集計）を `proxy_requests` から読み直す。
+  # 集計・並び替えは全リクエストが対象になるよう、可能な限り server-schema の
+  # クエリ（DB 側で latency ソート / status 集計）に委ねる。
+  defp load_proxy(socket) do
+    socket
+    |> assign(:proxy_slow, fetch_slow_requests(@slow_limit))
+    |> assign(:proxy_status, fetch_status_counts())
+  end
+
+  # 『遅い順』は server-schema の latency ソート済みクエリ（slowest_proxy_requests/1）を
+  # 優先し、DB 側で全リクエストから遅い順に絞る。無い場合のみ、直近スライスを
+  # メモリ内で latency 降順ソートするフォールバックへ落ちる（この経路では
+  # 直近ウィンドウの制限が残ることを許容する）。DB 未接続でも落ちないよう rescue。
+  defp fetch_slow_requests(limit) do
+    try do
+      if exported?(:slowest_proxy_requests, 1) do
+        Logavo.Logs
+        |> apply(:slowest_proxy_requests, [limit])
+        |> Enum.map(&normalize_proxy/1)
+      else
+        @max_rows |> fetch_proxy_requests() |> slow_sort()
+      end
+    rescue
+      _ -> []
+    end
+  end
+
+  # 『ステータス別集計』は全リクエストが対象。server-schema の集計クエリ
+  # （proxy_status_counts/0）を優先し、DB 側で全件を status ごとに集計する。無い
+  # 場合のみ、直近スライスからのメモリ内集計へフォールバックする（この経路は
+  # 直近ウィンドウに限られる）。DB 未接続でも落ちないよう rescue。
+  defp fetch_status_counts do
+    try do
+      if exported?(:proxy_status_counts, 0) do
+        Logavo.Logs
+        |> apply(:proxy_status_counts, [])
+        |> normalize_status_counts()
+      else
+        @max_rows |> fetch_proxy_requests() |> status_counts()
+      end
+    rescue
+      _ -> []
+    end
+  end
+
+  # `Logavo.Logs` から proxy_requests を最良努力で読み込む（フォールバック用の
+  # 直近スライス取得）。server-schema 側で確定するクエリ関数名に密結合しないよう、
+  # 存在する関数だけを動的ディスパッチする。latency ソート済みクエリ
+  # （slowest_proxy_requests）は `fetch_slow_requests` が直接優先するため、ここでは
+  # 扱わない。DB 未接続でも落ちないよう rescue する。
+  defp fetch_proxy_requests(limit) do
+    try do
+      cond do
+        exported?(:list_proxy_requests, 1) ->
+          apply(Logavo.Logs, :list_proxy_requests, [limit])
+
+        exported?(:recent_proxy_requests, 1) ->
+          apply(Logavo.Logs, :recent_proxy_requests, [limit])
+
+        exported?(:list_recent_proxy_requests, 1) ->
+          apply(Logavo.Logs, :list_recent_proxy_requests, [limit])
+
+        exported?(:list_proxy_requests, 0) ->
+          Logavo.Logs |> apply(:list_proxy_requests, []) |> Enum.take(limit)
+
+        true ->
+          []
+      end
+      |> Enum.map(&normalize_proxy/1)
+    rescue
+      _ -> []
+    end
+  end
+
+  # latency_ms 降順で並べ、上限件数だけ返す（メモリ内ソートのフォールバック）。
+  defp slow_sort(requests) do
+    requests
+    |> Enum.sort_by(& &1.latency_ms, :desc)
+    |> Enum.take(@slow_limit)
+  end
+
+  # status ごとの件数を集計し、status 昇順で返す（メモリ内集計のフォールバック）。
+  defp status_counts(requests) do
+    requests
+    |> Enum.group_by(& &1.status)
+    |> Enum.map(fn {status, list} -> {status, length(list)} end)
+    |> Enum.sort_by(fn {status, _} -> status end)
+  end
+
+  # server-schema の集計クエリ（proxy_status_counts/0）の戻り値を表示用の
+  # {status, count} 昇順リストに正規化する。{status, count} タプルのリスト、または
+  # `%{status: _, count: _}` map のリストのいずれにも対応する。
+  defp normalize_status_counts(rows) do
+    rows
+    |> Enum.map(fn
+      {status, count} -> {to_int(status), to_int(count)}
+      %{} = row -> {to_int(field(row, :status)), to_int(field(row, :count))}
+    end)
+    |> Enum.sort_by(fn {status, _} -> status end)
+  end
+
+  # proxy_requests の 1 行（%ProxyRequest{} 構造体 / atom キー map / 文字列キー
+  # map）を表示用の正規化 map に変換する。spec 2.2 のフィールド。
+  defp normalize_proxy(entry) do
+    %{
+      id: field(entry, :id) || System.unique_integer([:positive, :monotonic]),
+      timestamp: to_text(field(entry, :timestamp)),
+      method: to_text(field(entry, :method)),
+      path: to_text(field(entry, :path)),
+      status: to_int(field(entry, :status)),
+      latency_ms: to_int(field(entry, :latency_ms)),
+      req_size: to_int(field(entry, :req_size)),
+      res_size: to_int(field(entry, :res_size))
+    }
+  end
+
+  # status からステータスクラス（色分け用）を決める。
+  defp status_class(status) when is_integer(status) do
+    cond do
+      status >= 500 -> "5xx"
+      status >= 400 -> "4xx"
+      status >= 300 -> "3xx"
+      status >= 200 -> "2xx"
+      true -> "other"
+    end
+  end
+
+  defp status_class(_), do: "other"
+
+  defp to_int(nil), do: 0
+  defp to_int(value) when is_integer(value), do: value
+  defp to_int(value) when is_float(value), do: trunc(value)
+
+  defp to_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, _} -> n
+      :error -> 0
+    end
+  end
+
+  defp to_int(_), do: 0
+
+  # --- 共通ヘルパ --------------------------------------------------------
 
   defp exported?(fun, arity) do
     Code.ensure_loaded?(Logavo.Logs) and function_exported?(Logavo.Logs, fun, arity)

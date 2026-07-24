@@ -18,6 +18,14 @@
 # (依存最小主義: 学習題材/攻撃面・更新負担の抑制)。これに伴い tokio へ "net"
 # feature のみ追加 (新規 crate ではなく既存中核依存の feature 追加)。
 #
+# agent-proxy (Phase 4 HTTP リバースプロキシ) は :9000 → :3000 のように待受→転送し、
+# 各リクエストの method/path/status/latency_ms/req/res サイズを spec 2.2 形式で
+# 記録して agent-ship 経由で server の POST /api/proxy へ送る (see src/proxy.rs)。
+# spec 1.2 は axum/hyper を中核依存として許可しているが、既存 ship.rs が tokio の
+# TcpStream 上に HTTP を自作している方針に揃え、プロキシも新規 crate を足さず
+# tokio net (既存 feature "net"/"io-util"/"sync") だけで自作する (依存最小主義:
+# 攻撃面・更新負担の抑制、学習題材)。新規依存・新規 feature の追加は無い。
+#
 # ASSUMPTION: spec pins no Rust edition; edition 2021 is used for broad
 # toolchain compatibility.
 [package]
