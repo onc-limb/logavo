@@ -1,6 +1,8 @@
-# ASSUMPTION: docs/spec.md Phase 0 only requires `cargo new agent` scaffolding;
-# runtime dependencies (tokio, axum, serde, regex) belong to Phase 1+, and the
-# issue's acceptance criteria state "no new deps", so none are declared here.
+# ASSUMPTION: This subtask's acceptance criteria state "no new deps", and
+# `cargo check` runs without network access, so no crates are added — not even
+# serde/toml. The Phase 1 TOML config loader is implemented with std only
+# (see src/config.rs). Core deps (tokio/axum/serde/regex) are introduced in
+# later subtasks (agent-tail/parse/ship/proxy) where they are actually needed.
 # ASSUMPTION: spec pins no Rust edition; edition 2021 is used for broad
 # toolchain compatibility.
 [package]
