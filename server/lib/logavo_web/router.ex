@@ -20,9 +20,11 @@ defmodule LogavoWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # The ingest API (POST /api/ingest) will be added here in Phase 2.
-  # scope "/api", LogavoWeb do
-  #   pipe_through :api
-  # end
+  # 取り込みAPI（localhost 前提のため認証なし, spec 3.1 / 5）。
+  scope "/api", LogavoWeb do
+    pipe_through :api
+
+    post "/ingest", IngestController, :create
+    post "/proxy", ProxyIngestController, :create
+  end
 end
