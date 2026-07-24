@@ -28,5 +28,7 @@ defmodule LogavoWeb.Router do
 
     post "/ingest", IngestController, :create
     post "/proxy", ProxyIngestController, :create
+    # 検索API（spec 3.2 / Phase 3, localhost 前提）。
+    get "/logs", LogsController, :index
   end
 end

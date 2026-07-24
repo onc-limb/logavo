@@ -1,10 +1,16 @@
 defmodule LogavoWeb.DashboardLive do
   @moduledoc """
-  リアルタイムログダッシュボード（spec Phase 2）。
+  リアルタイムログダッシュボード（spec Phase 2）＋フィルタ検索 UI（spec Phase 3）。
 
   マウント時に `Logavo.PubSub` を購読し、`POST /api/ingest` の保存後に
   ブロードキャストされる新着ログをリロードなしで表示する。レベル別に
   色分けし、表示件数には上限（`@max_rows`）を設ける。
+
+  Phase 3 として source / level / keyword / 期間(from,to) のフィルタ UI を追加する。
+  絞り込みはクライアント側に届いている表示バッファ（`@logs`）に対してその場で
+  適用し、結果を `@visible` に反映する。フィルタ未指定時は全件表示なので、
+  リアルタイム表示の既存挙動はそのまま保たれる。サーバ横断の検索は
+  `GET /api/logs`（`LogavoWeb.LogsController`）が担う。
 
   依存最小主義（spec 5.1）に従い、アセットパイプラインは使わず素の CSS を
   `priv/static/assets/` から静的配信する。対象は localhost のみ。
@@ -34,13 +40,26 @@ defmodule LogavoWeb.DashboardLive do
     socket =
       socket
       |> assign(:max_rows, @max_rows)
+      |> assign(:filters, default_filters())
       |> assign(:logs, initial_logs(@max_rows))
+      |> assign_visible()
 
     {:ok, socket}
   end
 
   @impl true
   def render(assigns) do
+    # Phase 2 のダッシュボードテストは max_rows / logs だけを持つソケットを直接
+    # 組み立てて render を呼ぶ（mount を経由しない）。Phase 3 で filters / visible を
+    # 追加したことでこの既存テスト経路が壊れないよう、未設定なら既定へフォールバック
+    # する。実運用では mount が両者を設定済みのため assign_new はスキップされる。
+    assigns = assign_new(assigns, :filters, fn -> default_filters() end)
+
+    assigns =
+      assign_new(assigns, :visible, fn ->
+        visible_logs(assigns.logs, assigns.filters)
+      end)
+
     ~H"""
     <div id="dashboard" class="dashboard">
       <%!-- root.html.heex は本タスクのスコープ外のため、ダッシュボード自身が素の
@@ -51,13 +70,45 @@ defmodule LogavoWeb.DashboardLive do
 
       <h1 class="dashboard-title">logavo dashboard</h1>
 
-      <p :if={@logs == []} id="empty-state" class="dashboard-empty">
+      <%!-- フィルタ UI（spec Phase 3）。phx-change で入力のたびに絞り込む。
+            未指定の項目は無視されるため、既定では全件が表示される。 --%>
+      <form id="log-filters" class="dashboard-filters" phx-change="filter" phx-submit="filter">
+        <input
+          type="text"
+          name="filters[source]"
+          value={@filters.source}
+          placeholder="source"
+          class="filter-source"
+        />
+        <select name="filters[level]" class="filter-level">
+          <option value="" selected={@filters.level == ""}>level: すべて</option>
+          <option
+            :for={level <- ~w(debug info warn error unknown)}
+            value={level}
+            selected={@filters.level == level}
+          >
+            <%= level %>
+          </option>
+        </select>
+        <input
+          type="text"
+          name="filters[keyword]"
+          value={@filters.keyword}
+          placeholder="keyword"
+          class="filter-keyword"
+        />
+        <input type="datetime-local" name="filters[from]" value={@filters.from} class="filter-from" />
+        <input type="datetime-local" name="filters[to]" value={@filters.to} class="filter-to" />
+        <button type="button" phx-click="reset" class="filter-reset">クリア</button>
+      </form>
+
+      <p :if={@visible == []} id="empty-state" class="dashboard-empty">
         まだログはありません。監視対象にログが書き込まれるとここに流れます。
       </p>
 
       <ul id="log-list" class="log-list">
         <li
-          :for={log <- @logs}
+          :for={log <- @visible}
           id={"log-#{log.id}"}
           class={"log-row log-level-#{log.level}"}
           data-level={log.level}
@@ -70,6 +121,19 @@ defmodule LogavoWeb.DashboardLive do
       </ul>
     </div>
     """
+  end
+
+  # --- フィルタイベント --------------------------------------------------
+
+  @impl true
+  def handle_event("filter", %{"filters" => filters}, socket) do
+    {:noreply, socket |> assign(:filters, coerce_filters(filters)) |> assign_visible()}
+  end
+
+  def handle_event("filter", _params, socket), do: {:noreply, socket}
+
+  def handle_event("reset", _params, socket) do
+    {:noreply, socket |> assign(:filters, default_filters()) |> assign_visible()}
   end
 
   # --- PubSub 受信 -------------------------------------------------------
@@ -104,8 +168,80 @@ defmodule LogavoWeb.DashboardLive do
   defp prepend(socket, entries) do
     incoming = Enum.map(entries, &normalize/1)
     logs = Enum.take(incoming ++ socket.assigns.logs, socket.assigns.max_rows)
-    assign(socket, :logs, logs)
+    socket |> assign(:logs, logs) |> assign_visible()
   end
+
+  # 現在のフィルタを表示バッファに適用し `@visible` を更新する。
+  # Phase 2 のテストは filters を持たないソケットを直接組み立てて handle_info を
+  # 通すことがあるため、未設定なら既定フィルタ（全件通過）にフォールバックする。
+  defp assign_visible(socket) do
+    filters = Map.get(socket.assigns, :filters) || default_filters()
+    assign(socket, :visible, visible_logs(socket.assigns.logs, filters))
+  end
+
+  defp default_filters do
+    %{source: "", level: "", keyword: "", from: "", to: ""}
+  end
+
+  defp coerce_filters(params) do
+    %{
+      source: trimmed(params, "source"),
+      level: trimmed(params, "level"),
+      keyword: trimmed(params, "keyword"),
+      from: trimmed(params, "from"),
+      to: trimmed(params, "to")
+    }
+  end
+
+  defp trimmed(params, key), do: params |> Map.get(key, "") |> to_string() |> String.trim()
+
+  # 表示バッファをフィルタで絞り込む。空のフィルタ項目は無視する（＝全件通過）。
+  defp visible_logs(logs, filters) do
+    Enum.filter(logs, &matches?(&1, filters))
+  end
+
+  defp matches?(log, filters) do
+    contains?(log.source, filters.source) and
+      level_matches?(log.level, filters.level) and
+      keyword_matches?(log, filters.keyword) and
+      from_matches?(log.timestamp, filters.from) and
+      to_matches?(log.timestamp, filters.to)
+  end
+
+  defp contains?(_value, ""), do: true
+
+  defp contains?(value, needle) do
+    String.contains?(String.downcase(value), String.downcase(needle))
+  end
+
+  defp level_matches?(_level, ""), do: true
+  defp level_matches?(level, want), do: level == want
+
+  defp keyword_matches?(_log, ""), do: true
+
+  defp keyword_matches?(log, keyword) do
+    needle = String.downcase(keyword)
+    String.contains?(String.downcase(log.message), needle) or
+      String.contains?(String.downcase(log.raw), needle)
+  end
+
+  # 期間は timestamp の辞書順比較で判定する。datetime-local(例 "2026-07-25T12:34")
+  # は timestamp(ISO8601)の接頭辞に相当する。ただし素朴に比較すると、保存値の
+  # ミリ秒付きフォーマット（"...12:34:56.000Z"）と分単位の境界指定（"...12:34"）が
+  # 食い違い、境界の秒付きログを取りこぼす（to に分を指定するとその分内の秒付き
+  # ログが除外される等）。そこで境界値を精度単位の端に正規化してから比較する:
+  #   * from は下端 = 末尾 "Z" を落とした接頭辞（その精度の先頭を含む）
+  #   * to   は上端 = 末尾 "Z" を落として高位センチネル "~" を付す（その精度の末尾まで含む）
+  # "~"(0x7E) は timestamp が取りうる文字（数字 / '.' / ':' / 'T' / 'Z'(0x5A)）より
+  # 大きいため、当該精度単位に属する全ログが上端以下に収まり、次の単位は除外される。
+  defp from_matches?(_ts, ""), do: true
+  defp from_matches?(ts, from), do: ts >= lower_bound(from)
+
+  defp to_matches?(_ts, ""), do: true
+  defp to_matches?(ts, to), do: ts <= upper_bound(to)
+
+  defp lower_bound(value), do: String.trim_trailing(value, "Z")
+  defp upper_bound(value), do: String.trim_trailing(value, "Z") <> "~"
 
   # 起動時に既存ログを最良努力で読み込む。server-search（Phase 3）で確定する
   # クエリ API 名に密結合しないよう、存在する関数だけを動的ディスパッチで呼ぶ。
