@@ -1,0 +1,27 @@
+# logavo agent 設定サンプル
+#
+# このファイルをコピーして logavo.toml を作成し、環境に合わせて編集してください:
+#   cp logavo.example.toml logavo.toml
+#   cargo run -- logavo.toml
+#
+# 対象は localhost のみを想定しています (docs/spec.md 5. 非機能要件)。
+
+# 送信先 server の ingest エンドポイント (必須)
+server_url = "http://localhost:4000/api/ingest"
+
+# 監視対象ログ (必須、1 件以上)。
+# name はダッシュボード上の source 名、path は tail するログファイル。
+[[sources]]
+name = "backend-api"
+path = "/path/to/app.log"
+
+[[sources]]
+name = "worker"
+path = "/path/to/worker.log"
+
+# リバースプロキシ設定 (任意、Phase 4 agent-proxy 用)。
+# listen で待ち受けたリクエストを upstream へ転送し、レイテンシを計測する。
+# 例: :9000 で受けて :3000 のアプリへ流す。
+[proxy]
+listen = "127.0.0.1:9000"
+upstream = "127.0.0.1:3000"
